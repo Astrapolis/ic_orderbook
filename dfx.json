@@ -1,0 +1,35 @@
+{
+  "canisters": {
+    "ic_orderbook": {
+      "main": "src/ic_orderbook/main.mo",
+      "type": "motoko"
+    },
+    "ic_orderbook_assets": {
+      "dependencies": [
+        "ic_orderbook"
+      ],
+      "frontend": {
+        "entrypoint": "src/ic_orderbook_assets/src/index.html"
+      },
+      "source": [
+        "src/ic_orderbook_assets/assets",
+        "dist/ic_orderbook_assets/"
+      ],
+      "type": "assets"
+    }
+  },
+  "defaults": {
+    "build": {
+      "args": "",
+      "packtool": ""
+    }
+  },
+  "dfx": "0.9.2",
+  "networks": {
+    "local": {
+      "bind": "127.0.0.1:8000",
+      "type": "ephemeral"
+    }
+  },
+  "version": 1
+}
