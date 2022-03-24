@@ -9,7 +9,7 @@
 
 # dfx temporary files
 .dfx/
-
+src/declarations
 # frontend code
 node_modules/
 dist/
