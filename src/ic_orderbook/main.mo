@@ -176,8 +176,9 @@ actor {
           case (?his) {
             for (id in (Iter.fromList(his.order_ids))){
               let order = orders.get(id);
-              if (order.side == #buy)
-              balance_in_book += (order.size_left * order.price);
+              if (order.side == #buy) {
+                balance_in_book += (order.size_left * order.price);
+              }
             }
           }
         }      
@@ -186,7 +187,7 @@ actor {
     ?(token, balance_in_book);
   };
 
-  func check_available_balance (trader : Text, token : Pair) : ?Nat {
+  func check_available_balance (trader : Text, token : Pair) : ?(Pair, Nat) {
     var balance_in_token = 0;
     var balance_in_book = 0;
     switch token {
@@ -207,7 +208,7 @@ actor {
       case (null) {};
       case (?bal) {balance_in_book := bal.1};
     };
-    ?(balance_in_token - balance_in_book);
+    ?(token, balance_in_token - balance_in_book);
   };
 
   func insert_order(side: Side, size: Nat, price: Nat, trader: Text) : Bool {
@@ -217,7 +218,7 @@ actor {
           case (null) {
             return false;
           };
-          case (?bal) {
+          case (?(pair, bal)) {
             if (bal < size * price) {return false};
           }
         }
@@ -227,7 +228,7 @@ actor {
           case (null) {
             return false;
           };
-          case (?bal) {
+          case (?(pair, bal)) {
             if (bal < size) {return false};
           }
         }
@@ -235,6 +236,14 @@ actor {
     };
     let order : Order = {side = side; size = size; price = price; trader = trader ; order_id = current_order_id ; var size_left = size};
     orders.add(order);
+    switch (user_history.get(trader)) {
+      case (null) {
+        user_history.put(trader, {var order_ids = List.make<Nat>(current_order_id); var receipt_ids : List.List<Nat> = List.nil()});
+      };
+      case (?h) {
+        h.order_ids := List.push(current_order_id, h.order_ids);
+      }
+    };
     return true;
   };
 
@@ -370,6 +379,10 @@ actor {
   func order_to_immutable(order : Order) : ImmutableOrder {
     ({side = order.side; size = order.size; price = order.price; 
     trader = order.trader ; order_id = order.order_id ; size_left = order.size_left});
+  };
+
+  public func check_available_fund(trader : Text, token : Pair) : async ?(Pair, Nat){
+      check_available_balance(trader, token);
   };
 
   public func limit_order(side: Side, size: Nat, price: Nat, trader: Text) : async ?ImmutableOrder {
