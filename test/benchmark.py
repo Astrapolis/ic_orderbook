@@ -54,7 +54,7 @@ def test(user_name, range_var):
 if __name__ == "__main__":
     threads = []
     test_users = 200
-    test_operations = 300
+    test_operations = 100
     for i in range(test_users):
         t = threading.Thread(target=test, args = ('test'+str(i), test_operations))
         threads.append(t)

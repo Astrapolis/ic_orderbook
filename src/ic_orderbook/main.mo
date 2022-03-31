@@ -162,7 +162,7 @@ actor {
         switch (user_history.get(user)) {
           case null {return null;};
           case (?his) {
-            for (id in (Iter.fromList(his.order_ids))){
+            for (id in (Iter.fromList(List.reverse(his.order_ids)))){
               let order = orders.get(id);
               if (order.side == #sell){              
                 balance_in_book += order.size_left;}
@@ -381,7 +381,7 @@ actor {
     user = order.user ; order_id = order.order_id ; size_left = order.size_left});
   };
 
-  public func check_available_fund(user : Text, token : Pair) : async ?(Pair, Nat){
+  public query func check_available_fund(user : Text, token : Pair) : async ?(Pair, Nat){
       check_available_balance(user, token);
   };
 
