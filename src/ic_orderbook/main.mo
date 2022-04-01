@@ -5,6 +5,7 @@ import TrieMap "mo:base/TrieMap";
 import Text "mo:base/Text";
 import List "mo:base/List";
 import Iter "mo:base/Iter";
+import MemoryInfo "memory_info"
 
 actor {
 
@@ -140,8 +141,13 @@ actor {
   };
 
   type UserHistory = {
-      var order_ids : List.List<Nat>;
-      var receipt_ids : List.List<Nat>;
+      order_ids : Buffer.Buffer<Nat>;
+      receipt_ids : Buffer.Buffer<Nat>;
+  };
+
+  type BalanceInBook = {
+    var base : Nat;
+    var quote : Nat;
   };
   
   type order_result = { #insufficient_fund; #success};
@@ -149,6 +155,7 @@ actor {
   let orders = Buffer.Buffer<Order>(10000);
   let receipts = Buffer.Buffer<Receipt>(10000);
   let user_history = TrieMap.TrieMap<Text, UserHistory>(Text.equal, Text.hash);
+  let user_balance_in_book = TrieMap.TrieMap<Text, BalanceInBook>(Text.equal, Text.hash);
   var current_order_id = 0;
   let max_price = 1000000;
   let price_points : [var Deque.Deque<Nat>]= Array.init(max_price, Deque.empty<Nat>()); 
@@ -162,7 +169,7 @@ actor {
         switch (user_history.get(user)) {
           case null {return null;};
           case (?his) {
-            for (id in (Iter.fromList(List.reverse(his.order_ids)))){
+            for (id in (his.order_ids.vals())){
               let order = orders.get(id);
               if (order.side == #sell){              
                 balance_in_book += order.size_left;}
@@ -174,7 +181,7 @@ actor {
         switch (user_history.get(user)) {
           case null {return null;};
           case (?his) {
-            for (id in (Iter.fromList(his.order_ids))){
+            for (id in (his.order_ids.vals())){
               let order = orders.get(id);
               if (order.side == #buy) {
                 balance_in_book += (order.size_left * order.price);
@@ -187,68 +194,104 @@ actor {
     ?(token, balance_in_book);
   };
 
-  func check_available_balance (user : Text, token : Pair) : ?(Pair, Nat) {
-    var balance_in_token = 0;
-    var balance_in_book = 0;
+  func check_available_balance (user : Text, token : Pair) : ?(Nat) {
+    var available_balance = 0;
     switch token {
-      case (#base){
-        switch (check_token_balance(user, pair.0)){
-          case (null) {};
-          case (?bal) {balance_in_token := bal}
-        }
-      };
       case (#quote) {
-        switch (check_token_balance(user, pair.1)){
-          case (null) {};
-          case (?bal) {balance_in_token := bal}
-        }        
-      }
+        switch (check_token_balance(user, pair.1)) {
+          case (null) {
+            return null;
+          };
+          case (?bal) {
+            available_balance := bal;
+          }
+        };
+
+        switch (user_balance_in_book.get(user)) {
+          case null {};
+          case (?bal) {
+            available_balance := available_balance - bal.quote;
+          }
+        };
+      };
+      case (#base) {
+        switch (check_token_balance(user, pair.0)) {
+          case (null) {
+            return null;
+          };
+          case (?bal) {
+            available_balance := bal;
+          }
+        };
+        switch (user_balance_in_book.get(user)) {
+          case null {};
+          case (?bal) {
+            available_balance := available_balance - bal.base;
+          }
+        };        
+      };
     };
-    switch (check_balance_in_book(user, token)) {
-      case (null) {};
-      case (?bal) {balance_in_book := bal.1};
-    };
-    ?(token, balance_in_token - balance_in_book);
+    return ?available_balance;
   };
 
   func insert_order(side: Side, size: Nat, price: Nat, user: Text) : Bool {
     switch side {
       case (#buy) {
-        switch (check_available_balance(user, #quote)) {
-          case (null) {
-            return false;
-          };
-          case (?(pair, bal)) {
-            if (bal < size * price) {return false};
-          }
-        }
+        switch (check_available_balance(user, #quote)){
+          case null {return false};
+          case (?bal) {if (bal < size * price) return false}; 
+        };
       };
-      case (#sell) {
-        switch (check_available_balance(user, #base)) {
-          case (null) {
-            return false;
-          };
-          case (?(pair, bal)) {
-            if (bal < size) {return false};
-          }
-        }
+      case (#sell) {  
+        switch (check_available_balance(user, #base)){
+          case null {return false};
+          case (?bal) {if (bal < size) return false}; 
+        };      
       };
     };
+
     let order : Order = {side = side; size = size; price = price; user = user ; order_id = current_order_id ; var size_left = size};
     orders.add(order);
     switch (user_history.get(user)) {
       case (null) {
-        user_history.put(user, {var order_ids = List.make<Nat>(current_order_id); var receipt_ids : List.List<Nat> = List.nil()});
+        user_history.put(user, {order_ids = Buffer.Buffer<Nat>(100); receipt_ids = Buffer.Buffer<Nat>(100)});
       };
       case (?h) {
-        h.order_ids := List.push(current_order_id, h.order_ids);
+        h.order_ids.add(current_order_id);
       }
     };
+
+    switch side {
+      case (#buy) {
+        switch (user_balance_in_book.get(user)) {
+          case null {
+            user_balance_in_book.put(user, {var base=0; var quote=size*price});
+          };
+          case (?bal) {
+            bal.quote += size * price;
+          }
+        }
+      };
+      case (#sell) {
+        switch (user_balance_in_book.get(user)) {
+          case null {
+            user_balance_in_book.put(user, {var base=size; var quote=0});
+          };
+          case (?bal) {
+            bal.base += size;
+          }
+        }
+      }
+    };
+
     return true;
   };
 
-  func remove_order(order_id_to_cancel : Nat) : Order {
+  func remove_order(order_id_to_cancel : Nat) : ?Order {
     let order = orders.get(order_id_to_cancel);
+    if (order.size_left == 0) {return null};
+
+    // split the price point to left and right, search for the order to cancel
     let (l, r) = price_points[order.price];
     var new_l : List.List<Nat> = List.nil();
     var new_r : List.List<Nat> = List.nil();
@@ -262,18 +305,48 @@ actor {
         new_r := List.push(order_id, new_r);
       }
     };
-    price_points[order.price] := (new_l, new_r);
-
     let canceled_order = {side = order.side; size : Nat = order.size - order.size_left; price = order.price; user = order.user ; order_id = order.order_id ;  var size_left = 0};
+
+    switch (user_balance_in_book.get(order.user)) {
+      case null {return null};
+      case (?bal) {
+        switch (order.side) {
+          case (#buy) {
+            bal.quote += order.size_left * order.price;
+          };
+          case (#sell) {
+            bal.base += order.size_left;
+          };
+        }
+      }
+    };
+
+    //new price point
+    price_points[order.price] := (new_l, new_r);
     orders.put(order_id_to_cancel, canceled_order);
-    canceled_order;
+    ?canceled_order;
   };
 
   func matching_hook(buyer_order : Order, seller_order : Order, size : Nat) : Bool{
     var success = false;
-    receipts.add({ buy_order_id = buyer_order.order_id; sell_order_id = seller_order.order_id; size = size;});
     success := transfer_from_to(pair.1, buyer_order.user, seller_order.user, size*seller_order.price);
     success := transfer_from_to(pair.0, seller_order.user, buyer_order.user, size);
+
+    switch (user_balance_in_book.get(buyer_order.user)) {
+      case null {return false};
+      case (?bal) {
+        bal.quote -= size * buyer_order.price;
+      }
+    };
+
+    switch (user_balance_in_book.get(seller_order.user)) {
+      case null {return false};
+      case (?bal) {
+        bal.base -= size;
+      }
+    };   
+
+    receipts.add({ buy_order_id = buyer_order.order_id; sell_order_id = seller_order.order_id; size = size;});
     success;
   };
 
@@ -381,13 +454,12 @@ actor {
     user = order.user ; order_id = order.order_id ; size_left = order.size_left});
   };
 
-  public query func check_available_fund(user : Text, token : Pair) : async ?(Pair, Nat){
-      check_available_balance(user, token);
+  public query func check_available_fund (user : Text, token : Pair) : async ?(Nat) {
+    check_available_balance(user, token);
   };
 
   func limit_order(side: Side, size: Nat, price: Nat, user: Text) : ?ImmutableOrder {
-    let inserted = insert_order(side, size, price, user);
-    if (inserted == false) {return null};
+    if (insert_order(side, size, price, user) == false) {return null};
     let final_order = matching(current_order_id);
     current_order_id += 1;
     ?({side = side; size = size; price = price; 
@@ -402,8 +474,11 @@ actor {
     limit_order(#sell, size, price, user);
   };
 
-  public func cancel_order(order_id_remove : Nat) : async ImmutableOrder{
-    order_to_immutable(remove_order(order_id_remove));
+  public func cancel_order(order_id_remove : Nat) : async ?ImmutableOrder{
+    switch (remove_order(order_id_remove)){
+      case null null;
+      case (?removed_order) {? order_to_immutable(removed_order)};
+    }
   };
 
   public query func render_orders() : async [ImmutableOrder] {
@@ -416,8 +491,12 @@ actor {
         [];
       };
       case (? user_history) {
-        Array.map(List.toArray(List.map(user_history.order_ids, orders.get)), order_to_immutable);
+        Array.map(Array.map(user_history.order_ids.toArray(), orders.get), order_to_immutable);
       };
     }
+  };
+
+  public query func getCanisterMemoryInfo() : async MemoryInfo.CanisterMemoryInfo {
+    MemoryInfo.getCanisterMemoryInfo();
   }
 }

@@ -65,6 +65,6 @@ if __name__ == "__main__":
 
     import csv
 
-    with open("out.csv", "w", newline="") as f:
+    with open("out2.csv", "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerows(benchmark)
